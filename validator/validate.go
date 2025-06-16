@@ -30,9 +30,9 @@ func loadSchema() error {
 		return nil
 	}
 
-	file, err := schemas.Schemas.Open("schemas/constructs/v1beta1/design/design.json")
+	file, err := schemas.Schemas.Open("schemas/constructs/v1alpha2/design.json")
 	if err != nil {
-		return utils.ErrReadFile(err, "schemas/constructs/v1beta1/design/design.json")
+		return utils.ErrReadFile(err, "schemas/constructs/v1alpha2/design.json")
 	}
 
 	cueschema, err = utils.ConvertoCue(file)

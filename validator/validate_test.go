@@ -4,14 +4,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/gofrs/uuid"
-
 	"github.com/meshery/meshkit/models/catalog/v1alpha1"
+	"github.com/meshery/schemas/models/v1alpha2"
 	"github.com/meshery/schemas/models/v1beta1"
 	"github.com/meshery/schemas/models/v1beta1/category"
-	"github.com/meshery/schemas/models/v1beta1/component"
 	"github.com/meshery/schemas/models/v1beta1/model"
-	"github.com/meshery/schemas/models/v1beta1/pattern"
 )
 
 type ValidationCases struct {
@@ -24,23 +21,9 @@ type ValidationCases struct {
 func TestValidator(t *testing.T) {
 	tests := []ValidationCases{
 		{
-			Path: "design",
-			Resource: &pattern.PatternFile{
-				Name:          "test-design",
-				SchemaVersion: v1beta1.DesignSchemaVersion,
-				Components: []*component.ComponentDefinition{
-					{
-						Id:          uuid.FromStringOrNil("test-component-id"),
-						DisplayName: "Test Component",
-						Component: component.Component{
-							Kind:    "Deployment",
-							Version: "v1",
-						},
-						Model: model.ModelDefinition{
-							Name: "Kubernetes",
-						},
-					},
-				},
+			Resource: v1alpha2.PatternFile{
+				Name:     "test-design",
+				Services: make(map[string]*v1alpha2.Service),
 			},
 			ShouldPass: true,
 		},
