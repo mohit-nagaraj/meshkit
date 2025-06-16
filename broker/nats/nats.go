@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/meshery/meshkit/broker"
+	"github.com/meshery/meshkit/errors"
 	nats "github.com/nats-io/nats.go"
 )
 
@@ -24,10 +25,36 @@ type Options struct {
 	MaxReconnect   int
 }
 
+// NatsConn defines the minimal interface for a NATS connection used by Nats
+// Only the methods used in Nats are included
+type NatsConn interface {
+	Servers() []string
+	Drain() error
+	Close()
+	Publish(subject string, data []byte) error
+	QueueSubscribe(subject, queue string, cb func(msg *nats.Msg)) (*nats.Subscription, error)
+	// Opts returns the options struct (for Info)
+	Opts() nats.Options
+}
+
+// natsConnWrapper adapts *nats.Conn to the NatsConn interface
+type natsConnWrapper struct {
+	*nats.Conn
+}
+
+func (w *natsConnWrapper) Opts() nats.Options {
+	return w.Conn.Opts
+}
+
+func (w *natsConnWrapper) QueueSubscribe(subject, queue string, cb func(msg *nats.Msg)) (*nats.Subscription, error) {
+	// Adapt the callback to nats.MsgHandler
+	return w.Conn.QueueSubscribe(subject, queue, nats.MsgHandler(cb))
+}
+
 // Nats will implement Nats subscribe and publish functionality
 type Nats struct {
-  conn *nats.Conn
-  wg   *sync.WaitGroup
+	conn NatsConn
+	wg   *sync.WaitGroup
 }
 
 // New - constructor
@@ -58,7 +85,7 @@ func New(opts Options) (broker.Handler, error) {
 		return nil, ErrConnect(err)
 	}
 
-	return &Nats{conn: nc, wg: &sync.WaitGroup{}}, nil
+	return &Nats{conn: &natsConnWrapper{nc}, wg: &sync.WaitGroup{}}, nil
 }
 
 func (n *Nats) ConnectedEndpoints() (endpoints []string) {
@@ -72,21 +99,30 @@ func (n *Nats) Info() string {
 	if n.conn == nil {
 		return broker.NotConnected
 	}
-	return n.conn.Opts.Name
+	return n.conn.Opts().Name
 }
 
 func (n *Nats) CloseConnection() {
-    if n.conn != nil {
-        if err := n.conn.Drain(); err != nil {
-            log.Printf("nats: drain error: %v", err)
-        }
-        n.conn.Close()
-    }
+	if n.conn != nil {
+		if err := n.conn.Drain(); err != nil {
+			log.Printf("nats: drain error: %v", err)
+		}
+		n.conn.Close()
+	}
 }
-
 
 // Publish - to publish messages
 func (n *Nats) Publish(subject string, message *broker.Message) error {
+	if message == nil {
+		return ErrPublish(errors.New(
+			"nats_publish_error",
+			errors.Alert,
+			[]string{"message is nil"},
+			[]string{},
+			[]string{},
+			[]string{},
+		))
+	}
 	b, err := json.Marshal(message)
 	if err != nil {
 		return ErrPublish(err)
@@ -96,21 +132,20 @@ func (n *Nats) Publish(subject string, message *broker.Message) error {
 
 // PublishWithChannel - to publish messages with channel
 func (n *Nats) PublishWithChannel(subject string, msgch chan *broker.Message) error {
-    go func() {
-        for msg := range msgch {
-            b, err := json.Marshal(msg)
-            if err != nil {
-                log.Printf("nats: JSON marshal error: %v", err)
-                continue
-            }
-            if err := n.conn.Publish(subject, b); err != nil {
-                log.Printf("nats: publish error for subject %s: %v", subject, err)
-            }
-        }
-    }()
-    return nil
+	go func() {
+		for msg := range msgch {
+			b, err := json.Marshal(msg)
+			if err != nil {
+				log.Printf("nats: JSON marshal error: %v", err)
+				continue
+			}
+			if err := n.conn.Publish(subject, b); err != nil {
+				log.Printf("nats: publish error for subject %s: %v", subject, err)
+			}
+		}
+	}()
+	return nil
 }
-
 
 // Subscribe - for subscribing messages
 // TODO Ques: Do we want to unsubscribe
@@ -132,11 +167,11 @@ func (n *Nats) Subscribe(subject, queue string, message []byte) error {
 // SubscribeWithChannel will publish all the messages received to the given channel
 func (n *Nats) SubscribeWithChannel(subject, queue string, msgch chan *broker.Message) error {
 	_, err := n.conn.QueueSubscribe(subject, queue, func(m *nats.Msg) {
-    	var msg broker.Message
-    	if err := json.Unmarshal(m.Data, &msg); err == nil {
-      		msgch <- &msg
-    	}
-  	})
+		var msg broker.Message
+		if err := json.Unmarshal(m.Data, &msg); err == nil {
+			msgch <- &msg
+		}
+	})
 	if err != nil {
 		return ErrQueueSubscribe(err)
 	}
